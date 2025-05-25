@@ -1,0 +1,209 @@
+{
+  "name": "YouTube POV Videos Automation",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        },
+        "startTime": "06:00"
+      },
+      "id": "cron-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Configuracion",
+        "range": "A:B",
+        "options": {}
+      },
+      "id": "read-config",
+      "name": "Leer Configuración",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Ideas_Base",
+        "range": "A:H",
+        "options": {}
+      },
+      "id": "read-ideas",
+      "name": "Leer Ideas Base",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "read",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Rendimiento_Videos",
+        "range": "A:H",
+        "options": {}
+      },
+      "id": "read-performance",
+      "name": "Leer Rendimiento",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4,
+      "position": [900, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://trends.google.com/trends/api/dailytrends",
+        "options": {
+          "queryParameters": {
+            "hl": "es-MX",
+            "tz": "-360",
+            "geo": "MX"
+          }
+        }
+      },
+      "id": "get-trends",
+      "name": "Obtener Tendencias Google",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1120, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Análisis de tendencias y selección de ideas\nconst config = $input.first().json;\nconst ideas = $input.all()[1].map(item => item.json);\nconst performance = $input.all()[2].map(item => item.json);\nconst trends = JSON.parse($input.all()[3].json.body.replace(')]}\\'', ''));\n\n// Función para calcular puntuación de idea\nfunction calcularPuntuacion(idea, tendencias, rendimiento) {\n  let puntuacion = 0;\n  \n  // Puntuación por tendencias\n  tendencias.forEach(trend => {\n    if (idea.Tema.toLowerCase().includes(trend.title.query.toLowerCase())) {\n      puntuacion += trend.formattedTraffic ? parseInt(trend.formattedTraffic.replace(/[^0-9]/g, '')) / 1000 : 10;\n    }\n  });\n  \n  // Puntuación por rendimiento histórico\n  const similares = rendimiento.filter(r => \n    r.Titulo && r.Titulo.toLowerCase().includes(idea.Tema.toLowerCase())\n  );\n  \n  if (similares.length > 0) {\n    const promedioVistas = similares.reduce((sum, r) => sum + parseInt(r.Vistas || 0), 0) / similares.length;\n    puntuacion += promedioVistas / 100;\n  }\n  \n  return puntuacion;\n}\n\n// Seleccionar mejores ideas\nconst ideasConPuntuacion = ideas.map(idea => ({\n  ...idea,\n  puntuacion: calcularPuntuacion(idea, trends.default.trendingSearchesDays[0].trendingSearches, performance)\n}));\n\n// Ordenar por puntuación y tomar top 5\nconst topIdeas = ideasConPuntuacion\n  .sort((a, b) => b.puntuacion - a.puntuacion)\n  .slice(0, 5);\n\n// Generar variaciones para cada idea\nconst videosParaGenerar = topIdeas.map((idea, index) => ({\n  id: `${Date.now()}_${index}`,\n  ideaBase: idea,\n  horaPublicacion: new Date(Date.now() + (index * 4 * 60 * 60 * 1000)).toISOString(),\n  estado: 'pendiente'\n}));\n\nreturn videosParaGenerar.map(video => ({ json: video }));"
+      },
+      "id": "analyze-select-ideas",
+      "name": "Analizar y Seleccionar Ideas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 300]
+    },
+    {
+      "parameters": {
+        "url": "http://localhost:11434/api/generate",
+        "options": {
+          "headers": {
+            "Content-Type": "application/json"
+          },
+          "body": {
+            "model": "llama2",
+            "prompt": "={{\"Crea un guión POV viral de 45-60 segundos sobre: \" + $json.ideaBase.Tema + \". Hook impactante (5 seg), desarrollo emocional (40-50 seg), CTA fuerte (5 seg). Estilo: casual, relatable, generación Z. Incluye pausas dramáticas. Tema: \" + $json.ideaBase.Hook}}",
+            "stream": false
+          },
+          "bodyType": "json"
+        }
+      },
+      "id": "generate-script",
+      "name": "Generar Guión con Ollama",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1560, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generar título viral optimizado\nconst idea = $json.ideaBase;\nconst guion = JSON.parse($json.response).response;\n\n// Templates de títulos virales\nconst templates = [\n  \"POV: {tema} y esto pasó... 😱\",\n  \"Cuando {tema} pero nadie te cree 🤯\",\n  \"El día que {tema} cambió todo 💀\",\n  \"POV: {tema} plot twist inesperado ✨\",\n  \"Nadie habla de cuando {tema} 🤫\",\n  \"POV: {tema} gone wrong 😬\",\n  \"El momento exacto cuando {tema} 🎭\",\n  \"POV: {tema} pero make it dramatic 🎪\"\n];\n\n// Seleccionar template aleatorio\nconst template = templates[Math.floor(Math.random() * templates.length)];\nconst titulo = template.replace('{tema}', idea.Tema);\n\n// Generar descripción\nconst descripcion = `${guion.substring(0, 100)}...\n\n🔥 ¿Te ha pasado algo similar?\n💭 Cuéntame en los comentarios\n\n#POV #Viral #${idea.Tema.replace(/\\s+/g, '')} #Relatable #Storytime`;\n\n// Generar hashtags\nconst hashtags = [\n  '#POV',\n  '#Viral',\n  `#${idea.Tema.replace(/\\s+/g, '')}`,\n  '#Relatable',\n  '#Storytime',\n  '#Trending',\n  '#FYP',\n  '#ParaTi'\n];\n\nreturn {\n  json: {\n    ...input.json,\n    guion: guion,\n    titulo: titulo,\n    descripcion: descripcion,\n    hashtags: hashtags,\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "id": "generate-metadata",
+      "name": "Generar Metadatos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1780, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.unsplash.com/search/photos",
+        "options": {
+          "queryParameters": {
+            "query": "={{$json.ideaBase.Tema}}",
+            "per_page": "3",
+            "orientation": "portrait"
+          },
+          "headers": {
+            "Authorization": "Client-ID YOUR_UNSPLASH_ACCESS_KEY"
+          }
+        }
+      },
+      "id": "get-images",
+      "name": "Obtener Imágenes Unsplash",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [2000, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generar video usando HTML5 y Canvas\nconst datos = $json;\nconst imagenes = JSON.parse($json.body).results;\n\n// Configuración del video\nconst config = {\n  width: 1080,\n  height: 1920,\n  fps: 30,\n  duracion: 50, // segundos\n  frames: 50 * 30 // total frames\n};\n\n// Estructura del guión por escenas\nconst escenas = [\n  {\n    tipo: 'hook',\n    duracion: 5,\n    texto: datos.guion.substring(0, 100),\n    fondo: imagenes[0]?.urls?.regular || '#FF6B6B'\n  },\n  {\n    tipo: 'desarrollo',\n    duracion: 40,\n    texto: datos.guion.substring(100, 400),\n    fondo: imagenes[1]?.urls?.regular || '#4ECDC4'\n  },\n  {\n    tipo: 'cta',\n    duracion: 5,\n    texto: 'Sígueme para más contenido como este! 🔥',\n    fondo: imagenes[2]?.urls?.regular || '#45B7D1'\n  }\n];\n\n// Generar comando FFmpeg para crear video\nconst ffmpegCommand = `\nffmpeg -f lavfi -i color=c=black:size=${config.width}x${config.height}:duration=${config.duracion} \\\n-vf \"drawtext=fontfile=/path/to/font.ttf:text='${datos.titulo}':fontcolor=white:fontsize=48:x=(w-text_w)/2:y=(h-text_h)/2\" \\\n-c:v libx264 -t ${config.duracion} -pix_fmt yuv420p \\\n/tmp/video_${datos.id}.mp4\n`;\n\n// Canvas para thumbnail\nconst thumbnailHTML = `\n<canvas id=\"thumbnail\" width=\"1280\" height=\"720\"></canvas>\n<script>\nconst canvas = document.getElementById('thumbnail');\nconst ctx = canvas.getContext('2d');\n\n// Fondo gradiente\nconst gradient = ctx.createLinearGradient(0, 0, 1280, 720);\ngradient.addColorStop(0, '#FF6B6B');\ngradient.addColorStop(1, '#4ECDC4');\nctx.fillStyle = gradient;\nctx.fillRect(0, 0, 1280, 720);\n\n// Título\nctx.fillStyle = '#FFFFFF';\nctx.font = 'bold 64px Arial';\nctx.textAlign = 'center';\nctx.shadowColor = '#000000';\nctx.shadowBlur = 10;\nctx.fillText('${datos.titulo.substring(0, 30)}', 640, 360);\n\n// Emoji/decoración\nctx.font = '120px Arial';\nctx.fillText('🎬', 640, 500);\n\n// Convertir a base64\nconst thumbnailData = canvas.toDataURL('image/jpeg', 0.9);\n</script>\n`;\n\nreturn {\n  json: {\n    ...datos,\n    videoConfig: config,\n    escenas: escenas,\n    ffmpegCommand: ffmpegCommand,\n    thumbnailHTML: thumbnailHTML,\n    rutaVideo: `/tmp/video_${datos.id}.mp4`,\n    rutaThumbnail: `/tmp/thumb_${datos.id}.jpg`\n  }\n};"
+      },
+      "id": "generate-video-config",
+      "name": "Configurar Generación Video",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2220, 300]
+    },
+    {
+      "parameters": {
+        "command": "={{$json.ffmpegCommand}}"
+      },
+      "id": "execute-ffmpeg",
+      "name": "Ejecutar FFmpeg",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2440, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Generar thumbnail usando Node.js Canvas (si está disponible)\nconst { createCanvas } = require('canvas');\nconst fs = require('fs');\n\nconst canvas = createCanvas(1280, 720);\nconst ctx = canvas.getContext('2d');\n\n// Fondo gradiente\nconst gradient = ctx.createLinearGradient(0, 0, 1280, 720);\ngradient.addColorStop(0, '#FF6B6B');\ngradient.addColorStop(1, '#4ECDC4');\nctx.fillStyle = gradient;\nctx.fillRect(0, 0, 1280, 720);\n\n// Texto del título\nctx.fillStyle = '#FFFFFF';\nctx.font = 'bold 64px Arial';\nctx.textAlign = 'center';\nctx.fillText($json.titulo.substring(0, 30), 640, 300);\n\n// Emoji\nctx.font = '120px Arial';\nctx.fillText('🎬', 640, 450);\n\n// Guardar thumbnail\nconst buffer = canvas.toBuffer('image/jpeg');\nfs.writeFileSync($json.rutaThumbnail, buffer);\n\nreturn {\n  json: {\n    ...$json,\n    thumbnailGenerado: true,\n    thumbnailSize: buffer.length\n  }\n};"
+      },
+      "id": "generate-thumbnail",
+      "name": "Generar Thumbnail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 300]
+    },
+    {
+      "parameters": {
+        "resource": "video",
+        "operation": "upload",
+        "title": "={{$json.titulo}}",
+        "categoryId": "24",
+        "description": "={{$json.descripcion}}",
+        "tags": "={{$json.hashtags.join(',')}}",
+        "privacyStatus": "public",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      },
+      "id": "upload-youtube",
+      "name": "Subir a YouTube",
+      "type": "n8n-nodes-base.youTube",
+      "typeVersion": 2,
+      "position": [2880, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "append",
+        "documentId": "YOUR_GOOGLE_SHEET_ID",
+        "sheetName": "Videos_Programados",
+        "range": "A:G",
+        "options": {},
+        "values": {
+          "values": [
+            [
+              "={{new Date().toISOString()}}",
+              "={{$json.ideaBase.ID}}",
+              "={{$json.titulo}}",
+              "={{$json.descripcion}}",
+              "={{$json.hashtags.join(' ')}}",
+              "={{$json.id}}",\n              \"publicado\"\n            ]\n          ]\n        }\n      },\n      \"id\": \"save-to-sheets\",\n      \"name\": \"Guardar en Sheets\",\n      \"type\": \"n8n-nodes-base.googleSheets\",\n      \"typeVersion\": 4,\n      \"position\": [3100, 300]\n    },\n    {\n      \"parameters\": {\n        \"jsCode\": \"// Sistema de limpieza y logging\\nconst fs = require('fs');\\n\\n// Limpiar archivos temporales\\ntry {\\n  if (fs.existsSync($json.rutaVideo)) {\\n    fs.unlinkSync($json.rutaVideo);\\n  }\\n  if (fs.existsSync($json.rutaThumbnail)) {\\n    fs.unlinkSync($json.rutaThumbnail);\\n  }\\n} catch (error) {\\n  console.log('Error limpiando archivos:', error);\\n}\\n\\n// Log de éxito\\nconst resultado = {\\n  timestamp: new Date().toISOString(),\\n  videoId: $json.id,\\n  titulo: $json.titulo,\\n  estado: 'completado',\\n  youtubeId: $json.videoId || 'pendiente',\\n  duracionProceso: Date.now() - new Date($json.timestamp).getTime()\\n};\\n\\nconsole.log('Video procesado exitosamente:', resultado);\\n\\nreturn { json: resultado };\"\n      },\n      \"id\": \"cleanup-log\",\n      \"name\": \"Limpieza y Log\",\n      \"type\": \"n8n-nodes-base.code\",\n      \"typeVersion\": 2,\n      \"position\": [3320, 300]\n    },\n    {\n      \"parameters\": {\n        \"conditions\": {\n          \"options\": {\n            \"caseSensitive\": true,\n            \"leftValue\": \"\",\n            \"typeValidation\": \"strict\"\n          },\n          \"conditions\": [\n            {\n              \"id\": \"error-condition\",\n              \"leftValue\": \"={{$json.error}}\",\n              \"rightValue\": \"\",\n              \"operator\": {\n                \"operation\": \"exists\",\n                \"type\": \"boolean\"\n              }\n            }\n          ],\n          \"combinator\": \"and\"\n        },\n        \"options\": {}\n      },\n      \"id\": \"error-handler\",\n      \"name\": \"Manejo de Errores\",\n      \"type\": \"n8n-nodes-base.if\",\n      \"typeVersion\": 2,\n      \"position\": [3540, 300]\n    },\n    {\n      \"parameters\": {\n        \"authentication\": \"oAuth2\",\n        \"operation\": \"append\",\n        \"documentId\": \"YOUR_GOOGLE_SHEET_ID\",\n        \"sheetName\": \"Error_Log\",\n        \"range\": \"A:E\",\n        \"options\": {},\n        \"values\": {\n          \"values\": [\n            [\n              \"={{new Date().toISOString()}}\",\n              \"={{$json.error || 'Error desconocido'}}\",\n              \"={{$json.videoId || 'N/A'}}\",\n              \"={{$json.titulo || 'N/A'}}\",\n              \"error\"\n            ]\n          ]\n        }\n      },\n      \"id\": \"log-error\",\n      \"name\": \"Registrar Error\",\n      \"type\": \"n8n-nodes-base.googleSheets\",\n      \"typeVersion\": 4,\n      \"position\": [3760, 420]\n    }\n  ],\n  \"connections\": {\n    \"Schedule Trigger\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Leer Configuración\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Leer Configuración\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Leer Ideas Base\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Leer Ideas Base\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Leer Rendimiento\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Leer Rendimiento\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Obtener Tendencias Google\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Obtener Tendencias Google\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Analizar y Seleccionar Ideas\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Analizar y Seleccionar Ideas\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Generar Guión con Ollama\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Generar Guión con Ollama\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Generar Metadatos\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Generar Metadatos\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Obtener Imágenes Unsplash\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Obtener Imágenes Unsplash\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Configurar Generación Video\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Configurar Generación Video\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Ejecutar FFmpeg\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Ejecutar FFmpeg\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Generar Thumbnail\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Generar Thumbnail\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Subir a YouTube\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Subir a YouTube\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Guardar en Sheets\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Guardar en Sheets\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Limpieza y Log\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Limpieza y Log\": {\n      \"main\": [\n        [\n          {\n            \"node\": \"Manejo de Errores\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    },\n    \"Manejo de Errores\": {\n      \"main\": [\n        [],\n        [\n          {\n            \"node\": \"Registrar Error\",\n            \"type\": \"main\",\n            \"index\": 0\n          }\n        ]\n      ]\n    }\n  },\n  \"pinData\": {},\n  \"settings\": {\n    \"executionOrder\": \"v1\"\n  },\n  \"staticData\": null,\n  \"tags\": [],\n  \"triggerCount\": 1,\n  \"updatedAt\": \"2025-01-20T10:00:00.000Z\",\n  \"versionId\": \"1\"\n}
